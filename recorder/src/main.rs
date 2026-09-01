@@ -263,6 +263,8 @@ fn main() -> Result<()> {
             let mut prev_qpc = clock.now();
             let mut tick_count: u64 = 0;
             let mut exit_reason: Option<&str> = None;
+            let period_ms = (expected_us / 1000).max(1) as i64;
+            timer.start_periodic(period_ms);
 
             loop {
                 if !running.load(Ordering::SeqCst) {

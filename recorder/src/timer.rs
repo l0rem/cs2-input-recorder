@@ -8,7 +8,7 @@ use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::System::Threading::{
     CreateWaitableTimerExW, SetWaitableTimer, WaitForSingleObject,
-    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CREATE_WAITABLE_TIMER_MANUAL_RESET,
+    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
 };
 
 /// QPC clock wrapper.
@@ -79,21 +79,19 @@ impl TickTimer {
         // ACCESS_MASK combinations; failure returns INVALID_HANDLE_VALUE
         // which we fall back from.
         unsafe {
-            let flags = CREATE_WAITABLE_TIMER_MANUAL_RESET | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION;
+            // Automatic-reset (no MANUAL_RESET flag) so each periodic fire
+            // releases exactly one wait; HIGH_RESOLUTION for 1 ms accuracy.
+            let flags = CREATE_WAITABLE_TIMER_HIGH_RESOLUTION;
             if let Ok(h) = CreateWaitableTimerExW(None, PCWSTR::null(), flags, 0x1F0003) {
                 return TickTimer {
                     handle: h,
                     high_res: true,
                 };
             }
-            // fallback: plain timer (coarser, ~15.6 ms unless global resolution raised)
-            let h = CreateWaitableTimerExW(
-                None,
-                PCWSTR::null(),
-                CREATE_WAITABLE_TIMER_MANUAL_RESET,
-                0x1F0003,
-            )
-            .expect("CreateWaitableTimerExW failed even without high-res flag");
+            // fallback: plain automatic-reset timer (coarser, ~15.6 ms unless
+            // global resolution raised); 0 flags = automatic reset
+            let h = CreateWaitableTimerExW(None, PCWSTR::null(), 0u32, 0x1F0003)
+                .expect("CreateWaitableTimerExW failed even without high-res flag");
             TickTimer {
                 handle: h,
                 high_res: false,
@@ -105,20 +103,26 @@ impl TickTimer {
         self.high_res
     }
 
-    /// Wait for the next tick. One-shot manual-reset timer: set relative
-    /// due time of -1 (i.e. 100 ns units, negative = relative) then wait.
-    /// Caller re-arms each loop iteration.
-    pub fn wait_tick(&self) {
-        // SAFETY: handle is owned; due is a relative negative 100ns interval
-        // of 1 ms = -10_000; no completion callback.
+    /// Arm the periodic timer. Call once before the sample loop; the timer
+    /// then fires every `period_ms` milliseconds until cancelled.
+    pub fn start_periodic(&self, period_ms: i64) {
+        // SAFETY: handle owned; positive period = periodic re-arm by the OS
+        // itself (no per-tick SetWaitableTimer call in the hot loop); no
+        // completion callback.
         unsafe {
-            let due: i64 = -10_000; // 1 ms, relative
-            let _ = SetWaitableTimer(self.handle, &due, 0, None, None, false);
-            if WaitForSingleObject(self.handle, 32) == WAIT_OBJECT_0 {
-                return;
-            }
-            // timeout (timer never fired): return anyway — the dt math will
-            // record the real elapsed time, no fake samples are generated.
+            let due: i64 = -period_ms * 10_000; // negative = relative, 100 ns units
+            let _ = SetWaitableTimer(self.handle, &due, period_ms as i32, None, None, false);
+        }
+    }
+
+    /// Wait for the next timer tick (timer must have been armed with
+    /// start_periodic). Returns immediately-with-real-dt on timeout; the
+    /// dt math records reality, no fake samples are generated.
+    #[inline]
+    pub fn wait_tick(&self) {
+        // SAFETY: handle owned; timeout slightly above the period.
+        unsafe {
+            let _ = WaitForSingleObject(self.handle, 32);
         }
     }
 }
