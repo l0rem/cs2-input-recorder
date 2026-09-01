@@ -1,0 +1,2 @@
+[target.'cfg(windows)']
+rustflags = ["-L", "native=C:/Users/lorem/Desktop/strafes/recorder/wooting-lib"]

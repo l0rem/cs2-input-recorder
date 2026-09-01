@@ -1,0 +1,13 @@
+[package]
+name = "csi-decode"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "csi-decode"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+anyhow.workspace = true
+csi = { package = "cs2-input-recorder", path = "../recorder" }

@@ -1,0 +1,6 @@
+/target
+wooting-analog-sdk/
+sessions/
+bench/
+*.csi
+*.csi.part
