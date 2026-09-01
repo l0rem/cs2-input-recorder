@@ -179,3 +179,13 @@ Dev: `tempfile`. No async runtime, no serde, no compression — by design.
 GUI, overlay, web service, FACEIT demo download, demo parser, counter-strafe
 scoring, database, cloud, game-memory access, injection (any form), drivers,
 input modification/synthesis, macros, Raw Input backend, compression.
+
+
+## Running without a terminal window
+
+Windows 11 throttles timer precision for *windowless* processes. The included
+`start-recorder-hidden.vbs` launches the recorder fully hidden while keeping
+full 1 kHz precision (measured 1013 µs mean). A desktop shortcut
+`CS2 Recorder` is preconfigured to use it. Double-click to start; the recorder
+waits for CS2 and records automatically. To stop it: Task Manager →
+`cs2-input-recorder.exe` → End task (or just log off).
