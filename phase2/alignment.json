@@ -1,0 +1,42 @@
+{
+ "de_mirage": {
+  "model": "offset_only",
+  "offset_s": 26.0065,
+  "matched": 39,
+  "total_bursts": 52,
+  "median_residual_ms": -9.8,
+  "residual_std_ms": 133.9,
+  "residual_p10_ms": -155.1,
+  "residual_p90_ms": 218.2
+ },
+ "de_cache": {
+  "model": "offset_only",
+  "offset_s": 1787.9277,
+  "matched": 3,
+  "total_bursts": 6,
+  "median_residual_ms": -146.2,
+  "residual_std_ms": 142.5,
+  "residual_p10_ms": -161.4,
+  "residual_p90_ms": 87.7
+ },
+ "de_inferno": {
+  "model": "offset_only",
+  "offset_s": 2868.4124,
+  "matched": 27,
+  "total_bursts": 27,
+  "median_residual_ms": 0.0,
+  "residual_std_ms": 121.5,
+  "residual_p10_ms": -195.3,
+  "residual_p90_ms": 108.7
+ },
+ "de_dust2": {
+  "model": "offset_only",
+  "offset_s": 4566.5551,
+  "matched": 58,
+  "total_bursts": 78,
+  "median_residual_ms": -41.3,
+  "residual_std_ms": 150.4,
+  "residual_p10_ms": -194.3,
+  "residual_p90_ms": 201.4
+ }
+}
