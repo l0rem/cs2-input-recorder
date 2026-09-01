@@ -213,18 +213,24 @@ All Phase 1 acceptance criteria passed (2026-09-01):
    Drift check: −279 ppm (offset-only model is sufficient; a·t+b kept in
    reserve).
 2. **Shot extraction** (`extract_shots.py` → `shots.parquet`): every gun shot
-   mapped to demo velocity at fire + the aligned `.csi` input window.
-3. **Classification** (`first_bullets_classified.csv`): first bullets binned
-   per brief §19 error classes.
+   mapped to 1-tick demo speed at fire (native `velocity_*` is a check
+   column only — sparse fire-tick queries return NaN/garbage) plus the
+   aligned `.csi` input window.
+3. **Classification** (`first_bullets_classified.csv`): first bullets =
+   `shots_fired==1`; rifle accuracy = speed < 34% of weapon max; input-cause
+   classes only when `|Mouse1 residual| ≤ 30 ms`. Cache is excluded from
+   input-cause. There is no leftover `RELEASE_ONLY` bin.
 
-First-dataset findings (184 first bullets, 4 matches, 2026-09-01):
+Corrected first-dataset numbers (4 matches, 2026-09-01; **do not use the
+old 86.4% / 50% RELEASE_ONLY headlines**):
 
-- Accurate at first bullet (<130 u/s): **86.4%**
-- **50% of first bullets are RELEASE_ONLY** — deceleration by key release,
-  not counter-press — and those shots happen at ~36% higher speed than
-  properly countered ones (60.3 vs 44.1 u/s)
-- Initiation gap (old-key release → new-key onset): median 14 ms, worst 272 ms;
-  gap length does **not** correlate with first-bullet speed (r=0.05)
+- First bullets: 393 (`shots_fired==1`) vs 184 under the old 1 s gap
+- Rifle first-bullet accurate (AK/M4/Galil/FAMAS, 1-tick speed < 34% max):
+  **115/170 = 67.6%** (the old ±16 window + flat 130 u/s read 93.5% on the
+  same 170 shots)
+- Input-cause is trusted on only **58/393** first bullets; the rest fail
+  the 30 ms Mouse1 gate. Among those 58: 22 A/D with no opposite onset,
+  17 clean counters, 13 diagonal (W/S+A/D). Too few to change training.
 - Full report: `phase2/PHASE3_REPORT.md`
 
 ## Future improvements
@@ -234,7 +240,7 @@ Deliberately deferred — each is triggered by evidence, not by speculation:
 | Item | Trigger / precondition | Notes |
 |------|------------------------|-------|
 | Auto-start at login | User convenience; one Task Scheduler entry | No code changes needed |
-| Diagonal counter classifier (WA→SD etc.) | ~5–10 more recorded matches | The headline Phase 3.6 metric; thresholds need real distributions |
+| Diagonal counter classifier (WA→SD etc.) | More matches **and** tighter CSI↔demo residual | W/S involvement is already flagged; full opposite-diagonal states need more than 58 sync-ok first bullets |
 | Rolling cross-match stats (brief §21) | ~10+ matches | Only useful once per-match analysis proves stable |
 | Raw Input keyboard backend | Evidence of missed digital transitions in real data | `GetAsyncKeyState` has never missed one so far |
 | Busy-wait timer hybrid (exact 1000.0 Hz) | Only if sub-sample timing ever matters | Costs ~1–2% CPU; `dt_us` already makes it unnecessary |

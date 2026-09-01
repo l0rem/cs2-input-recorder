@@ -1,53 +1,82 @@
-# Phase 3 — first counter-strafe analysis (4 matches, 2026-09-01)
+# Phase 3 — corrected first-bullet analysis
+
+Measurement pass after the ±16 / 130 u/s / leftover-RELEASE_ONLY review.
+Speed = 1-tick horizontal posdiff at the fire tick. Native velocity is a check column.
+Headline accuracy = rifles only, speed < 34% of weapon max. Input-cause gated on |Mouse1 residual| ≤ 30 ms.
+Cache excluded from input-cause. Do not compare these numbers to the previous 86.4% / 50% RELEASE_ONLY headlines.
 
 ## Dataset
-- 783 gun shots across 4 matches (mirage 292, dust2 321, inferno 121, cache 49 gun fires)
-- 184 first bullets analyzed
-- 46 with clear A<->D counter-strafe transitions in the prior 400 ms
+- Session CSI: `2026-09-01_135047.csi`
+- Gun shots: 783 across de_cache, de_dust2, de_inferno, de_mirage
+- Live (not warmup/freeze): 783
+- First bullets (`shots_fired==1`): 393 (old 1s-gap rule would have kept 184)
+- Headline rifles among first bullets: 170
 
-## Headline: movement at first bullet
-- Accurate at shot (<130 u/s): **86.4% overall** (mirage 82.8%, dust2 87.6%, inferno 90.3%)
-- Median first-bullet speed: 54.7 u/s; p90: 133 u/s
-- 25 shots (13.6%) fired while still moving fast (>=130 u/s)
+## Old vs new (this rerun)
 
-## Input execution (46 counter-strafe first bullets)
-- Initiation gap (old-key release -> new-key digital onset):
-  median 14 ms, p75 40 ms, worst 272 ms
-- Digital overlap (both opposing keys down): median 0 ms, p75 7 ms, max 104 ms
-- Initiation gap does NOT correlate with shot speed here (r=0.05):
-  your slow initiations happen when you were already slowing, so they don't
-  cost accuracy on the FIRST bullet — but 8 shots with gap >50 ms were still
-  all accurate, meaning the counter completed anyway.
+- Gun shots extracted: 783 (live 783, warmup/freeze 0)
+- First bullets: old 1s-gap 184 → shots_fired==1 393
+- Speed 1-tick vs ±16 window: n=783 corr=0.853 median |diff|=16.4 u/s p90=57.6
+- Speed 1-tick vs native-at-tick: n=782 corr=0.985 median |diff|=2.3 disagree>30=11
+- Rifle first-bullet 'accurate': ±16 window <130 = 93.5% → 1-tick < 34% max = 67.6% (n=170)
+- Rifle first-bullet median speed: window 40.3 → 1-tick 39.4 u/s
 
-## Preliminary diagnosis (small sample!)
-1. Your counter-strafing execution is fundamentally clean (88-100% accurate
-   regardless of gap length).
-2. The rare bad shots (10 >=200 u/s) are worth watching in replay — these are
-   the 'shot before correction complete' class.
-3. Sample sizes are too small for diagonal-specific conclusions yet; keep
-   recording matches.
+## Rifle first-bullet accuracy (live, `shots_fired==1`)
+- Accurate (< 34% max): **115/170 = 67.6%**
+- Median speed 39.4 u/s; p90 173.7
 
-## Recorder fixes queued (from data):
-- dt drift ~4% under load (p99 1214us in Test B): consider busy-wait hybrid later
-- GetAsyncKeyState can miss sub-ms taps at 1 kHz: acceptable, noted
+| weapon | n | threshold | median speed | accurate |
+|---|---:|---:|---:|---:|
+| weapon_ak47 | 51 | 73.1 | 32.7 | 63% |
+| weapon_famas | 12 | 74.8 | 70.5 | 75% |
+| weapon_galilar | 42 | 73.1 | 39.1 | 64% |
+| weapon_m4a1_silencer | 65 | 76.5 | 40.6 | 72% |
 
+## Sync (first bullets, live)
+- Offset-only residual: n=368 median -0.8 ms  std 161.9 ms  |resid|≤30 ms 16.3%
 
-## Error classification (first bullets, 184 total)
-| Class | n | % | Median speed |
-|---|---|---|---|
-| RELEASE_ONLY (decelerated by releasing, not countering) | 92 | 50.0% | 60.3 |
-| CLEAN (countered, accurate) | 38 | 20.7% | 44.1 |
-| EARLY_FIRE (>=130 u/s at shot) | 25 | 13.6% | 178.8 |
-| STATIONARY | 24 | 13.0% | 9.7 |
-| DELAYED_OPPOSITE_KEY (gap>100ms) | 4 | 2.2% | 54.0 |
-| KEY_OVERLAP (>50ms) | 1 | 0.5% | 21.3 |
+| map | n pairs | offset resid std | slope resid std | ppm | |off|≤30 | |slope|≤30 |
+|---|---:|---:|---:|---:|---:|---:|
+| de_cache | 8 | 215.8 | 199.3 | 1866.0 | 0% | 0% |
+| de_dust2 | 168 | 184.1 | 145.0 | -188.6 | 14% | 11% |
+| de_inferno | 82 | 113.0 | 99.1 | -123.9 | 30% | 27% |
+| de_mirage | 110 | 147.1 | 138.2 | -90.0 | 13% | 17% |
 
-**Key insight:** half of your first bullets happen during pure release
-deceleration, not active counter-strafing — and their median speed (60 u/s) is
-*higher* than properly countered shots (44 u/s). Release-only deceleration
-leaves you moving faster at the shot. This is directly actionable: your
-training focus should be pressing the opposite key on every strafe-stop,
-not just when you consciously remember.
+Slope is a comparison only. Classification below uses the existing offset-only alignment.
 
-Diagonals (W/A or W/D involvement) could not yet be separately classified —
-needs the full transition classifier (Phase 3.6) with more data.
+## Input-cause classes
+Only first bullets with `|residual_ms| ≤ 30` (cache always `SKIP_CACHE`).
+No leftover `RELEASE_ONLY` bin. `RELEASE_NO_COUNTER` requires A/D analog and no opposite-key onset.
+
+| class | n | % of first bullets | median speed |
+|---|---:|---:|---:|
+| SYNC_UNCERTAIN | 321 | 81.7% | 52.8 |
+| RELEASE_NO_COUNTER | 22 | 5.6% | 46.65 |
+| COUNTER_CLEAN | 17 | 4.3% | 40.4 |
+| SKIP_CACHE | 14 | 3.6% | 49.25 |
+| DIAGONAL | 13 | 3.3% | 76.3 |
+| FORWARD_BACK | 3 | 0.8% | 0.0 |
+| STATIONARY | 2 | 0.5% | 0.0 |
+| DELAYED_OPPOSITE | 1 | 0.3% | 14.8 |
+
+- W/S involved in window: 172/393 first bullets (44%)
+- Sync-ok first bullets (input-cause trusted): 58/393
+
+Among sync-ok first bullets only:
+
+| class | n | % of sync-ok | median speed |
+|---|---:|---:|---:|
+| RELEASE_NO_COUNTER | 22 | 37.9% | 46.65 |
+| COUNTER_CLEAN | 17 | 29.3% | 40.4 |
+| DIAGONAL | 13 | 22.4% | 76.3 |
+| FORWARD_BACK | 3 | 5.2% | 0.0 |
+| STATIONARY | 2 | 3.4% | 0.0 |
+| DELAYED_OPPOSITE | 1 | 1.7% | 14.8 |
+
+- W/S involved among sync-ok: 22/58
+
+## What this does *not* say
+- Do not train on a '50% release-only' figure. That class no longer exists as a default bin.
+- Initiation-gap medians among `COUNTER_*` rows are CSI-internal; they are only attached to a demo fire when `sync_ok`.
+- Pistols/SMG/AWP are stored but excluded from the rifle headline.
+
