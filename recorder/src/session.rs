@@ -14,7 +14,11 @@ pub struct IntervalStats {
     reservoir: Vec<u32>,
     reservoir_full: bool,
     pub late_count: u64,
+    /// top-N slowest dt values, for post-session stall diagnostics
+    top_late: Vec<u32>,
 }
+
+const TOP_LATE_CAP: usize = 8;
 
 const RESERVOIR_CAP: usize = 4096;
 
@@ -27,6 +31,7 @@ impl IntervalStats {
             reservoir: Vec::with_capacity(RESERVOIR_CAP),
             reservoir_full: false,
             late_count: 0,
+            top_late: Vec::with_capacity(TOP_LATE_CAP),
         }
     }
 
@@ -39,6 +44,10 @@ impl IntervalStats {
         }
         if late {
             self.late_count += 1;
+            self.top_late.push(dt_us);
+            self.top_late.sort_unstable();
+            self.top_late.reverse();
+            self.top_late.truncate(TOP_LATE_CAP);
         }
         if !self.reservoir_full {
             if self.reservoir.len() < RESERVOIR_CAP {
@@ -47,6 +56,11 @@ impl IntervalStats {
                 self.reservoir_full = true;
             }
         }
+    }
+
+    /// Slowest recorded intervals (desc), for end-of-session diagnostics.
+    pub fn top_late_us(&self) -> &[u32] {
+        &self.top_late
     }
 
     pub fn mean_us(&self) -> Option<f64> {
@@ -83,6 +97,7 @@ impl Default for IntervalStats {
 pub struct SessionSummary {
     pub path: PathBuf,
     pub samples: u64,
+    pub top_late_us: Vec<u32>,
     pub mean_interval_us: Option<f64>,
     pub p95_interval_us: Option<u32>,
     pub p99_interval_us: Option<u32>,
@@ -158,6 +173,7 @@ impl Session {
         Ok(SessionSummary {
             path: self.path_final,
             samples: self.total_samples,
+            top_late_us: self.stats.top_late_us().to_vec(),
             mean_interval_us: self.stats.mean_us(),
             p95_interval_us: self.stats.percentile_us(1000, 0.95),
             p99_interval_us: self.stats.percentile_us(1000, 0.99),

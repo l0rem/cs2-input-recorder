@@ -159,6 +159,16 @@ fn print_summary(s: &SessionSummary) {
     }
     println!("  max interval: {} us", s.max_interval_us);
     println!("  late samples: {}", s.late_samples);
+    if !s.top_late_us.is_empty() {
+        println!(
+            "  slowest intervals: {} us",
+            s.top_late_us
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     println!("  SDK errors: {}", s.sdk_errors);
     println!(
         "  analog valid: {} / {} samples",
