@@ -2,15 +2,14 @@
 //!
 //! No injection, no memory reading, no input modification. Telemetry only.
 
-mod session;
 mod wooting;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use csi::keys;
+use csi::session::SessionSummary;
 use csi::timer::{elapsed_us, is_late, QpcClock, TickTimer};
 use csi::{quantize_analog, FLAG_ANALOG_VALID, FLAG_SDK_ERROR, FLAG_TIMER_LATE, HEADER_SIZE};
-use session::SessionSummary;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -168,7 +167,7 @@ fn print_summary(s: &SessionSummary) {
     println!("  file: {}", s.path.display());
 }
 
-fn finalize_and_print(s: session::Session, label: &str) -> Result<()> {
+fn finalize_and_print(s: csi::session::Session, label: &str) -> Result<()> {
     let summary = s
         .finalize()
         .with_context(|| "failed to finalize session file")?;
@@ -225,14 +224,14 @@ fn main() -> Result<()> {
     }
 
     let clock = QpcClock::new();
-    let mut active: Option<session::Session> = None;
+    let mut active: Option<csi::session::Session> = None;
     let mut force_session_done = false;
 
     if args.force {
         log("recording (forced, no CS2 wait)");
         let header = make_header(&clock, &args, 0, wooting_device_id(&wooting));
         let ts = now_timestamp();
-        let s = session::Session::start(&args.output_dir, &header, &ts)
+        let s = csi::session::Session::start(&args.output_dir, &header, &ts)
             .context("failed to create session file")?;
         log(&format!("recording -> {}", ts));
         active = Some(s);
@@ -364,7 +363,7 @@ fn main() -> Result<()> {
                 log(&format!("CS2 detected, PID {pid}"));
                 let header = make_header(&clock, &args, pid, wooting_device_id(&wooting));
                 let ts = now_timestamp();
-                let s = session::Session::start(&args.output_dir, &header, &ts)
+                let s = csi::session::Session::start(&args.output_dir, &header, &ts)
                     .context("failed to create session file")?;
                 log(&format!("recording -> {ts}.csi"));
                 active = Some(s);

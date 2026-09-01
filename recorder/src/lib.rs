@@ -1,10 +1,11 @@
 //! `csi` — shared library for the CS2 input recorder project.
 //!
-//! Pure / testable modules. Win32-touching code (wooting FFI, session IO)
-//! lives in the binary crate only.
+//! Pure / testable modules. Win32-touching wooting FFI lives in the binary
+//! crate only.
 
 pub mod csi;
 pub mod keys;
+pub mod session;
 pub mod timer;
 
 // Convenience re-exports so consumers can `use csi::{Header, Sample, ...}`

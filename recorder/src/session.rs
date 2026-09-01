@@ -1,6 +1,6 @@
 //! Session: buffered `.csi` writer with clean-finalize and `.part` rename.
 
-use csi::csi::{encode_sample, write_header, Header, Sample};
+use crate::csi::{encode_sample, write_header, Header, Sample};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -163,7 +163,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use csi::csi::{BIT_W, FLAG_ANALOG_VALID, MAGIC};
+    use crate::csi::{BIT_W, FLAG_ANALOG_VALID, MAGIC};
 
     fn tempdir() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
@@ -172,8 +172,8 @@ mod tests {
     fn test_header() -> Header {
         Header {
             magic: *MAGIC,
-            format_version: csi::csi::FORMAT_VERSION,
-            header_size: csi::csi::HEADER_SIZE,
+            format_version: crate::csi::FORMAT_VERSION,
+            header_size: crate::csi::HEADER_SIZE,
             sample_rate_hz: 1000,
             reserved0: 0,
             qpc_frequency: 10_000_000,
@@ -213,7 +213,7 @@ mod tests {
         }
         // read back
         let mut f = std::fs::File::open(dir.path().join("test.csi")).unwrap();
-        let h = csi::csi::read_header(&mut f).unwrap();
+        let h = crate::csi::read_header(&mut f).unwrap();
         assert_eq!(h.sample_rate_hz, 1000);
         let mut count = 0u64;
         let mut buf = [0u8; 16];
@@ -249,12 +249,12 @@ mod tests {
         }
         // chop off half of the last sample
         let mut data = std::fs::read(dir.path().join("trunc.csi")).unwrap();
-        let header_len = csi::csi::HEADER_SIZE as usize;
+        let header_len = crate::csi::HEADER_SIZE as usize;
         let expected_full = header_len + 9 * 16;
         data.truncate(expected_full + 8);
         std::fs::write(dir.path().join("trunc2.csi"), &data).unwrap();
         let mut f = std::fs::File::open(dir.path().join("trunc2.csi")).unwrap();
-        csi::csi::read_header(&mut f).unwrap();
+        crate::csi::read_header(&mut f).unwrap();
         let mut buf = [0u8; 16];
         let mut count = 0;
         loop {
