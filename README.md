@@ -121,13 +121,22 @@ and `GetAsyncKeyState` identities match 1:1.
 `QueryPerformanceCounter` is the event clock. Ticks come from a
 high-resolution **automatic-reset waitable timer** (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`,
 1 ms period, armed once per session; `SetWaitableTimerEx` with zero tolerable
-delay defeats coalescing). Two Win11-specific stabilizers are active and
+delay defeats coalescing). Three Win11-specific stabilizers are active and
 documented:
 
 1. `timeBeginPeriod(1)` for the recorder's lifetime — Win11's effective timer
    period tracks the system resolution, which other processes can silently lower.
 2. `SetProcessInformation(ProcessPowerThrottling)` with throttling disabled —
    otherwise Windows 11 EcoQoS burst-coalesces background 1 ms timers to ~1.5 ms.
+3. The same call opts out of `IGNORE_TIMER_RESOLUTION` (Win11 24H2), which
+   otherwise lets the OS silently ignore timer-resolution requests from
+   background processes.
+
+Known limitation: when launched from a *headless* parent (e.g. an agent
+process with no interactive window), Windows may still coalesce to ~1.5 ms
+ticks. Launched from a normal console — how you'll always run it — measured
+1020–1041 µs mean (Tests A/B/D). Whatever the effective rate, every sample
+stores its true `dt_us`, so offline analysis is unaffected.
 
 Every sample stores the true measured `dt_us`; late wakes are flagged, never
 papered over with synthetic samples.

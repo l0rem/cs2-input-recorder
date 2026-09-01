@@ -96,11 +96,15 @@ impl TimerResolutionGuard {
             state_mask: u32,
         }
         const PROCESS_POWER_THROTTLING_EXECUTION_SPEED: u32 = 0x1;
+        // Win11 24H2: OS may ignore a background process's timer-resolution
+        // requests entirely — opt out of that too.
+        const PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION: u32 = 0x4;
         const PROCESS_POWER_THROTTLING: u32 = 4;
         let pts = PowerThrottlingState {
             version: 1,
-            control_mask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-            state_mask: 0, // 0 = throttling not allowed
+            control_mask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+                | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+            state_mask: 0, // 0 = neither throttling allowed
         };
         // SAFETY: GetCurrentProcess pseudo-handle is always -1 (valid).
         unsafe {
