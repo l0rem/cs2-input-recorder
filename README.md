@@ -2,25 +2,34 @@
 
 Passive, read-only keyboard/mouse telemetry recorder for Counter-Strike 2
 counter-strafe analysis. Runs beside the game, samples Wooting analog
-W/A/S/D plus OS-visible digital keys at 1 kHz into a compact binary file,
-and follows the CS2 process lifetime automatically.
+W/A/S/D plus OS-visible digital keys at ~1 kHz into a compact binary file,
+follows the CS2 process lifetime automatically, and shows its state in the
+system tray. An offline analysis pipeline (Python) aligns recorded sessions
+with match demos and classifies counter-strafe execution per first bullet.
 
 **The recorder is telemetry only.** It never reads game memory, injects,
 hooks, modifies or generates input, or touches the network.
 
+## Status: complete and in daily use
+
+All four validation tests passed (see [Validation history](#validation-history)).
+The tool is production-stable; development is data-driven — new work only
+starts when recorded match data justifies it (see [Future improvements](#future-improvements)).
+
 ## Components
 
-| Binary | Purpose |
+| Piece | Purpose |
 |---|---|
-| `cs2-input-recorder.exe` | The recorder: waits for `cs2.exe`, samples, writes `.csi` |
+| `cs2-input-recorder.exe` | The recorder: waits for `cs2.exe`, samples at ~1 kHz, writes `.csi`, tray icon |
 | `csi-decode.exe` | Offline decoder: `inspect` + bounded `export-csv` |
+| `phase2/` | Alignment + analysis: demo↔session timeline matching, per-shot extraction, error classification |
+| `start-recorder-hidden.vbs` | Hidden-window launcher (full timer precision, no visible console) |
 
 ## Build
 
 Requirements: Windows 10/11, [Rust](https://rustup.rs) (MSVC toolchain),
-VS Build Tools with the C++ workload, and the
-[Wooting Analog SDK v0.9.1](https://github.com/WootingKb/wooting-analog-sdk/releases)
-(the keyboard's system SDK, installed via the Wooting dashboard).
+VS Build Tools with the C++ workload. The analyzer additionally needs
+`pip install demoparser2 pandas`.
 
 ```bash
 cargo build --release
@@ -36,11 +45,32 @@ cs2-input-recorder.exe --force                # record immediately (testing)
 cs2-input-recorder.exe --force --duration 30  # forced 30 s capture
 cs2-input-recorder.exe --hz 1000              # sample rate (default 1000)
 cs2-input-recorder.exe --output-dir D:\logs   # default: ./sessions
-cs2-input-recorder.exe --analog-optional      # keep running without the Wooting SDK (samples flagged)
+cs2-input-recorder.exe --analog-optional      # continue without the Wooting SDK (samples flagged)
 ```
 
 State transitions are logged to the console; nothing is logged per-sample.
-Ctrl+C flushes, finalizes and exits cleanly.
+Ctrl+C (or tray → Stop recorder) flushes, finalizes and exits cleanly.
+
+### Tray icon
+
+- **Red dot** — waiting for `cs2.exe`
+- **Green dot** — CS2 detected, recording
+- **Left- or right-click → "Stop recorder"** — ends the current session
+  cleanly (flush + finalize) and exits. Same path as Ctrl+C.
+
+The tray lives on its own thread and communicates with the sampler through
+two atomics only (one store per state change, one relaxed load per tick):
+measured impact on the hot loop: none.
+
+### Running without a terminal window
+
+Windows 11 throttles timer precision for *windowless* processes (a process
+with no window at all — e.g. agent-spawned — gets coalesced to ~1.5 ms ticks
+regardless of API calls). A window that exists but is hidden is enough to
+keep full precision. `start-recorder-hidden.vbs` launches the recorder that
+way — measured 1013 µs mean. A desktop shortcut `CS2 Recorder` is
+preconfigured to use it. To stop: tray icon → Stop recorder, or Task
+Manager → end `cs2-input-recorder.exe`.
 
 ## The `.csi` format
 
@@ -81,7 +111,7 @@ Digital mask bits: 0 W · 1 A · 2 S · 3 D · 4 Space · 5 LCtrl · 6 LShift ·
 
 Status flags: bit0 analog-valid · bit1 timer-late · bit2 sdk-error.
 
-At 1 kHz: 16 KB/s ≈ **57.6 MB/hour** of raw payload. No compression (deliberate).
+At ~1 kHz: 16 KB/s ≈ **57.6 MB/hour** of raw payload. No compression (deliberate).
 
 Crash recovery: sessions are written to `<timestamp>.csi.part` and renamed to
 `.csi` on clean close. A killed session leaves the `.part` file, which
@@ -116,13 +146,18 @@ pressed keys; held analog state for W/A/S/D is maintained locally (the SDK
 reports a released key as 0.0 once). Keycode mode is `VirtualKey` so analog
 and `GetAsyncKeyState` identities match 1:1.
 
+Note: the dist DLL first tries to delegate to a system-wide Analog SDK install
+and prints `failed to delagate to system dll: DLLNotFound` if absent (the
+v0.9.1 MSI would install it). This is **cosmetic** — the dist handles the
+calls itself and analog capture is unaffected (verified: 100% analog-valid
+samples across all sessions).
+
 ## Timer architecture
 
 `QueryPerformanceCounter` is the event clock. Ticks come from a
 high-resolution **automatic-reset waitable timer** (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`,
 1 ms period, armed once per session; `SetWaitableTimerEx` with zero tolerable
-delay defeats coalescing). Three Win11-specific stabilizers are active and
-documented:
+delay defeats coalescing). Three Win11-specific stabilizers are active:
 
 1. `timeBeginPeriod(1)` for the recorder's lifetime — Win11's effective timer
    period tracks the system resolution, which other processes can silently lower.
@@ -132,60 +167,110 @@ documented:
    otherwise lets the OS silently ignore timer-resolution requests from
    background processes.
 
-Known limitation: when launched from a *headless* parent (e.g. an agent
-process with no interactive window), Windows may still coalesce to ~1.5 ms
-ticks. Launched from a normal console — how you'll always run it — measured
-1020–1041 µs mean (Tests A/B/D). Whatever the effective rate, every sample
-stores its true `dt_us`, so offline analysis is unaffected.
-
-Every sample stores the true measured `dt_us`; late wakes are flagged, never
-papered over with synthetic samples.
+Known limitation: a process with **no window at all** (headless agent parent)
+is still coalesced to ~1.5 ms by Windows regardless of the above. Any launch
+path that creates a window — normal console, or the hidden VBS launcher —
+measures 1013–1041 µs mean. Whatever the effective rate, every sample stores
+its true `dt_us`; late wakes are flagged, never papered over with synthetic
+samples.
 
 ## Benchmarks (this machine: 16 logical cores, Win11, Wooting 80HE)
 
-Release build, 30 s forced session:
+| Session | Duration | Mean interval | p99 | Late | CPU |
+|---------|---------:|--------------:|----:|-----:|----:|
+| 30 s forced (Test A) | 30 s | 1021 µs | 1069 µs | 0 | 0.12% of total |
+| 30 min forced (Test B) | 30 min | 1021 µs | 1069 µs | 0.003% | 0.12% of total |
+| 2 h auto, CS2 + 4 matches (Test D) | 1h 57m | 1057 µs | 1834 µs | 1.6% | ~0.12% of total |
 
-| Metric | Value |
-|--------|-------|
-| CPU | 1.98 % of one core = **0.12 % of total machine CPU** |
-| Working set | 7.56 MB (peak 7.56 MB) |
-| Disk payload | 16 KB/s ≈ 57.6 MB/h + 96-byte header |
-| Mean interval | 1025 µs |
-| p95 | 1043 µs |
-| p99 | 1102 µs |
-| Max | 6.8 ms (background burst; flagged `timer-late`) |
-| Binary size | ~750 KB per exe |
-| SDK errors | 0 |
+Other: working set 7.6 MB · disk ≈ 57.6 MB/h · binaries ~750 KB each ·
+SDK errors 0 in every session.
 
-## Phase 1 validation sequence
+The Test D late-sample uptick is expected: CS2's own scheduling competes for
+timer slots. Analysis is unaffected (true `dt_us` per sample).
 
-- **Test A (desktop):** `--force --duration 30`; perform A, D, A+D overlap,
-  W+A, W+D, slow/fast depressions, Mouse1; `export-csv --start 10 --duration 5`
-  and eyeball the analog curves + where digital transitions fire.
-- **Test B (performance):** 20–30 min release run; Task Manager CPU/RAM/disk;
-  `inspect` for internal interval stats.
-- **Test C (CS2 offline):** launch recorder, then CS2; verify auto-start,
-  no FPS impact, auto-stop on exit, file readable.
-- **Test D (Valve matchmaking):** record several Competitive matches on the
-  same map, download the `.dem`s — the Phase 2 dataset. Stop here.
+## Validation history
+
+All Phase 1 acceptance criteria passed (2026-09-01):
+
+- **Test A (desktop):** analog curves sane; digital-on at ~6–7% analog depth
+  (that constant is what Phase 3 uses); overlaps, diagonals, slow/fast
+  depressions all captured.
+- **Test B (performance):** 30 min run, 0.12% total CPU, 7.6 MB, 0.003% late.
+- **Test C (lifecycle):** auto-attach on CS2 start, auto-stop on exit,
+  files finalized, 0 SDK errors across a 2 h session.
+- **Test D (matches):** 4 Valve Competitive matches recorded continuously
+  (6.64 M samples, 100% analog-valid) and aligned with their demos.
+
+## Analysis pipeline (Phase 2 + 3)
+
+`phase2/` contains the offline tooling. Per session:
+
+1. **Alignment** (`ALIGNMENT_REPORT.md`): group user `weapon_fire` events from
+   each demo into gun bursts; group `.csi` Mouse1 clicks the same way; search
+   the time offset maximizing burst matches; refine on the median residual.
+   All 4 matches placed with high confidence (matched/total: mirage 39/52,
+   cache 3/6, inferno **27/27**, dust2 58/78; random baseline ~6–12).
+   Drift check: −279 ppm (offset-only model is sufficient; a·t+b kept in
+   reserve).
+2. **Shot extraction** (`extract_shots.py` → `shots.parquet`): every gun shot
+   mapped to demo velocity at fire + the aligned `.csi` input window.
+3. **Classification** (`first_bullets_classified.csv`): first bullets binned
+   per brief §19 error classes.
+
+First-dataset findings (184 first bullets, 4 matches, 2026-09-01):
+
+- Accurate at first bullet (<130 u/s): **86.4%**
+- **50% of first bullets are RELEASE_ONLY** — deceleration by key release,
+  not counter-press — and those shots happen at ~36% higher speed than
+  properly countered ones (60.3 vs 44.1 u/s)
+- Initiation gap (old-key release → new-key onset): median 14 ms, worst 272 ms;
+  gap length does **not** correlate with first-bullet speed (r=0.05)
+- Full report: `phase2/PHASE3_REPORT.md`
+
+## Future improvements
+
+Deliberately deferred — each is triggered by evidence, not by speculation:
+
+| Item | Trigger / precondition | Notes |
+|------|------------------------|-------|
+| Auto-start at login | User convenience; one Task Scheduler entry | No code changes needed |
+| Diagonal counter classifier (WA→SD etc.) | ~5–10 more recorded matches | The headline Phase 3.6 metric; thresholds need real distributions |
+| Rolling cross-match stats (brief §21) | ~10+ matches | Only useful once per-match analysis proves stable |
+| Raw Input keyboard backend | Evidence of missed digital transitions in real data | `GetAsyncKeyState` has never missed one so far |
+| Busy-wait timer hybrid (exact 1000.0 Hz) | Only if sub-sample timing ever matters | Costs ~1–2% CPU; `dt_us` already makes it unnecessary |
+| Demo auto-download (brief §22 / Phase 4) | Only if the metrics change training decisions | Explicitly out of scope for now |
+
+## Known issues / small things
+
+- **Effective sample rate is ~960–980 Hz**, not 1000.0: the Windows scheduler
+  timer grid rounds the 1 ms period up slightly. Analytically irrelevant
+  (true `dt_us` per sample), cosmetically noted here.
+- **Late samples during CS2** (~1.6% in Test D, all flagged): scheduling
+  pressure from the game itself. No data loss; flagged per sample.
+- **Console prints `failed to delagate to system dll: DLLNotFound`** at
+  startup (sic — typo is in the SDK's own message): the dist DLL finds no
+  system-wide Analog SDK and falls back to handling calls itself. Harmless;
+  installing `wooting_analog_sdk_v0.9.1.msi` would silence it. Analog capture
+  works either way (verified).
+- **Tray icon is hand-drawn GDI** (16×16 filled dot). Works; no icon asset.
+- **Stop via tray from the hidden launcher**: session finalizes cleanly;
+  the VBS launcher itself exits immediately (recorder is a detached process).
+- **Killed sessions leave `.csi.part`** — intentional; the file decodes fully
+  up to the cut. Delete stray `.part` files whenever.
+- **`--duration` and `--force` interplay**: `--force --duration N` records
+  exactly N seconds then exits; without `--duration` a forced session runs
+  until Ctrl+C/tray stop.
 
 ## Dependencies
 
-Runtime: `windows` 0.58 (feature-gated), `clap` 4, `anyhow` 1, `ctrlc` 3.
+Rust runtime: `windows` 0.58 (feature-gated), `clap` 4, `anyhow` 1, `ctrlc` 3.
 Dev: `tempfile`. No async runtime, no serde, no compression — by design.
+Python analyzer: `demoparser2`, `pandas` (+ `numpy`, `pyarrow` transitively).
 
 ## Not implemented (on purpose)
 
-GUI, overlay, web service, FACEIT demo download, demo parser, counter-strafe
-scoring, database, cloud, game-memory access, injection (any form), drivers,
-input modification/synthesis, macros, Raw Input backend, compression.
-
-
-## Running without a terminal window
-
-Windows 11 throttles timer precision for *windowless* processes. The included
-`start-recorder-hidden.vbs` launches the recorder fully hidden while keeping
-full 1 kHz precision (measured 1013 µs mean). A desktop shortcut
-`CS2 Recorder` is preconfigured to use it. Double-click to start; the recorder
-waits for CS2 and records automatically. To stop it: Task Manager →
-`cs2-input-recorder.exe` → End task (or just log off).
+GUI, overlay, web service, FACEIT demo download, demo parser in Rust,
+counter-strafe live scoring, database, cloud, game-memory access, injection
+(any form), drivers, input modification/synthesis, macros, Raw Input backend,
+compression. The offline demo parsing lives in `phase2/` as Python by design
+(performance doesn't matter offline; the recorder stays dependency-light).

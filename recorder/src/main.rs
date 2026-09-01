@@ -2,6 +2,7 @@
 //!
 //! No injection, no memory reading, no input modification. Telemetry only.
 
+mod tray;
 mod wooting;
 
 use anyhow::{Context, Result};
@@ -182,6 +183,7 @@ fn finalize_and_print(s: csi::session::Session, label: &str) -> Result<()> {
         .finalize()
         .with_context(|| "failed to finalize session file")?;
     log(&format!("recording finished ({label})"));
+    tray::set_state(tray::STATE_WAITING);
     print_summary(&summary);
     Ok(())
 }
@@ -227,6 +229,7 @@ fn main() -> Result<()> {
     );
 
     let running = Arc::new(AtomicBool::new(true));
+    let _tray = tray::spawn();
     {
         let running = running.clone();
         ctrlc::set_handler(move || running.store(false, Ordering::SeqCst))
@@ -245,6 +248,7 @@ fn main() -> Result<()> {
         let s = csi::session::Session::start(&args.output_dir, &header, &ts)
             .context("failed to create session file")?;
         log(&format!("recording -> {}", ts));
+        tray::set_state(tray::STATE_RECORDING);
         active = Some(s);
     } else {
         log("waiting for cs2.exe");
@@ -259,6 +263,10 @@ fn main() -> Result<()> {
     'supervisor: loop {
         if !running.load(Ordering::SeqCst) {
             log("ctrl-c received, stopping");
+            break 'supervisor;
+        }
+        if tray::stop_requested() {
+            log("stop requested from tray, finishing");
             break 'supervisor;
         }
         if let Some(dl) = duration_deadline {
@@ -279,6 +287,10 @@ fn main() -> Result<()> {
             loop {
                 if !running.load(Ordering::SeqCst) {
                     exit_reason = Some("ctrl-c");
+                    break;
+                }
+                if tray::stop_requested() {
+                    exit_reason = Some("tray-stop");
                     break;
                 }
                 if let Some(dl) = duration_deadline {
@@ -377,6 +389,7 @@ fn main() -> Result<()> {
                 let s = csi::session::Session::start(&args.output_dir, &header, &ts)
                     .context("failed to create session file")?;
                 log(&format!("recording -> {ts}.csi"));
+                tray::set_state(tray::STATE_RECORDING);
                 active = Some(s);
             } else {
                 std::thread::sleep(std::time::Duration::from_millis(1000));
