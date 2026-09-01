@@ -59,6 +59,82 @@ pub fn elapsed_us(prev_qpc: u64, now_qpc: u64, freq: u64) -> u64 {
         .wrapping_div(freq.max(1))
 }
 
+/// Raise the system timer resolution to 1 ms for the recorder's lifetime.
+/// On Windows 11 the effective period of a 1 ms waitable timer tracks the
+/// current system resolution; without this, another process's
+/// timeEndPeriod can silently push us to ~1.5 ms ticks. Documented in README.
+pub struct TimerResolutionGuard {
+    active: bool,
+}
+
+impl TimerResolutionGuard {
+    pub fn acquire() -> TimerResolutionGuard {
+        // SAFETY: plain winmm call; pairs with timeEndPeriod in Drop.
+        #[link(name = "winmm")]
+        extern "system" {
+            fn timeBeginPeriod(period: u32) -> u32;
+            fn timeEndPeriod(period: u32) -> u32;
+        }
+        let active = unsafe { timeBeginPeriod(1) } == 0; // TIMERR_NOERROR = 0
+
+        // Disable Windows 11 EcoQoS/PowerThrottling for this process: without
+        // it, background-process 1 ms timers get burstily coalesced to ~1.5 ms
+        // even with timeBeginPeriod(1) active.
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetProcessInformation(
+                hprocess: isize,
+                class: u32, // PROCESS_INFORMATION_CLASS
+                info: *const PowerThrottlingState,
+                size: u32,
+            ) -> i32;
+        }
+        #[repr(C)]
+        struct PowerThrottlingState {
+            version: u32,
+            control_mask: u32,
+            state_mask: u32,
+        }
+        const PROCESS_POWER_THROTTLING_EXECUTION_SPEED: u32 = 0x1;
+        const PROCESS_POWER_THROTTLING: u32 = 4;
+        let pts = PowerThrottlingState {
+            version: 1,
+            control_mask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+            state_mask: 0, // 0 = throttling not allowed
+        };
+        // SAFETY: GetCurrentProcess pseudo-handle is always -1 (valid).
+        unsafe {
+            let _ = SetProcessInformation(
+                -1, // GetCurrentProcess() pseudo-handle
+                4,  // ProcessPowerThrottling
+                &pts,
+                std::mem::size_of::<PowerThrottlingState>() as u32,
+            );
+        }
+
+        TimerResolutionGuard { active }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+}
+
+impl Drop for TimerResolutionGuard {
+    fn drop(&mut self) {
+        if self.active {
+            // SAFETY: pairs with the successful timeBeginPeriod(1) above.
+            #[link(name = "winmm")]
+            extern "system" {
+                fn timeEndPeriod(period: u32) -> u32;
+            }
+            unsafe {
+                let _ = timeEndPeriod(1);
+            }
+        }
+    }
+}
+
 /// A sample is "late" if it took more than 2x the expected interval.
 #[inline]
 pub fn is_late(dt_us: u64, expected_us: u64) -> bool {

@@ -5,14 +5,18 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 /// Running interval statistics — fixed memory, no allocation per sample.
+/// Percentiles come from a fixed 4096-slot reservoir (exact enough for
+/// diagnostics; the full distribution lives in the .csi file anyway).
 pub struct IntervalStats {
     pub count: u64,
     pub sum_us: u64,
     pub max_us: u32,
-    /// 32-bucket histogram of dt in units of expected interval (0.5x..2.5x+)
-    pub buckets: [u32; 32],
+    reservoir: Vec<u32>,
+    reservoir_full: bool,
     pub late_count: u64,
 }
+
+const RESERVOIR_CAP: usize = 4096;
 
 impl IntervalStats {
     pub fn new() -> Self {
@@ -20,13 +24,14 @@ impl IntervalStats {
             count: 0,
             sum_us: 0,
             max_us: 0,
-            buckets: [0; 32],
+            reservoir: Vec::with_capacity(RESERVOIR_CAP),
+            reservoir_full: false,
             late_count: 0,
         }
     }
 
     #[inline]
-    pub fn observe(&mut self, dt_us: u32, expected_us: u32, late: bool) {
+    pub fn observe(&mut self, dt_us: u32, _expected_us: u32, late: bool) {
         self.count += 1;
         self.sum_us += dt_us as u64;
         if dt_us > self.max_us {
@@ -35,9 +40,13 @@ impl IntervalStats {
         if late {
             self.late_count += 1;
         }
-        // bucket: 0.5x intervals wide, from 0 to 16x expected, clamp above
-        let b = (dt_us / (expected_us / 2).max(1)) as usize;
-        self.buckets[b.min(31)] += 1;
+        if !self.reservoir_full {
+            if self.reservoir.len() < RESERVOIR_CAP {
+                self.reservoir.push(dt_us);
+            } else {
+                self.reservoir_full = true;
+            }
+        }
     }
 
     pub fn mean_us(&self) -> Option<f64> {
@@ -48,21 +57,21 @@ impl IntervalStats {
         }
     }
 
-    /// Approximate p95/p99 from the 0.5x-interval histogram.
-    pub fn percentile_us(&self, expected_us: u32, p: f64) -> Option<u32> {
-        if self.count == 0 {
+    /// Exact percentile over the reservoir (first 4096 samples —
+    /// representative for steady-state loop timing).
+    pub fn percentile_us(&self, _expected_us: u32, p: f64) -> Option<u32> {
+        if self.reservoir.is_empty() {
             return None;
         }
-        let target = (p * self.count as f64) as u64;
-        let mut acc = 0u64;
-        for (i, c) in self.buckets.iter().enumerate() {
-            acc += *c as u64;
-            if acc >= target {
-                return Some((i as u32) * (expected_us / 2).max(1));
-            }
-        }
-        Some(self.max_us)
+        let mut v = self.reservoir.clone();
+        v.sort_unstable();
+        Some(v[idx_of_sorted(&v, p)])
     }
+}
+
+#[inline]
+fn idx_of_sorted(v: &[u32], p: f64) -> usize {
+    ((p * (v.len() - 1) as f64) as usize).min(v.len() - 1)
 }
 
 impl Default for IntervalStats {

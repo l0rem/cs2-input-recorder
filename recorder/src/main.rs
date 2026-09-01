@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use csi::keys;
 use csi::session::SessionSummary;
-use csi::timer::{elapsed_us, is_late, QpcClock, TickTimer};
+use csi::timer::{elapsed_us, is_late, QpcClock, TickTimer, TimerResolutionGuard};
 use csi::{quantize_analog, FLAG_ANALOG_VALID, FLAG_SDK_ERROR, FLAG_TIMER_LATE, HEADER_SIZE};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -224,6 +224,7 @@ fn main() -> Result<()> {
     }
 
     let clock = QpcClock::new();
+    let _timer_res = TimerResolutionGuard::acquire();
     let mut active: Option<csi::session::Session> = None;
     let mut force_session_done = false;
 

@@ -11,6 +11,7 @@ windows = { version = "0.58", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Time",
+  "Win32_System_LibraryLoader",
 ] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
