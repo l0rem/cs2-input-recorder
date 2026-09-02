@@ -203,34 +203,45 @@ All Phase 1 acceptance criteria passed (2026-09-01):
 
 ## Analysis pipeline (Phase 2 + 3)
 
-`phase2/` contains the offline tooling. Per session:
+`phase2/` contains the offline tooling. Run from `phase2/`:
 
-1. **Alignment** (`ALIGNMENT_REPORT.md`): group user `weapon_fire` events from
-   each demo into gun bursts; group `.csi` Mouse1 clicks the same way; search
-   the time offset maximizing burst matches; refine on the median residual.
-   All 4 matches placed with high confidence (matched/total: mirage 39/52,
-   cache 3/6, inferno **27/27**, dust2 58/78; random baseline ~6–12).
-   Drift check: −279 ppm (offset-only model is sufficient; a·t+b kept in
-   reserve).
+```bash
+python -m unittest test_analysis -q
+python align.py                              # CSI + demos → alignment.json
+python extract_shots.py                      # demos + CSI → shots.parquet
+python extract_shots.py --reclassify         # redo match/classes from parquet+CSI
+python extract_shots.py --report-only        # regenerate PHASE3_REPORT.md
+```
+
+`--steamid`, `--csi`, `--demo` / `--replays` / `--demo-glob`, `--alignment`,
+`--output-dir` override the hard-coded 2026-09-01 defaults. Alignment is
+keyed by **demo filename** (schema 2), not map name.
+
+1. **Alignment** (`align.py` → `alignment.json`, `ALIGNMENT_REPORT.md`):
+   group user `weapon_fire` and CSI Mouse1 edges into 1.5 s bursts; search
+   a single offset per demo (one-to-one burst match). Four-match set:
+   mirage 39/52, cache 3/6, inferno **27/27**, dust2 58/78.
 2. **Shot extraction** (`extract_shots.py` → `shots.parquet`): every gun shot
    mapped to 1-tick demo speed at fire (native `velocity_*` is a check
-   column only — sparse fire-tick queries return NaN/garbage) plus the
-   aligned `.csi` input window.
+   column only — sparse fire-tick queries return NaN/garbage).
 3. **Classification** (`first_bullets_classified.csv`): first bullets =
-   `shots_fired==1`; rifle accuracy = speed < 34% of weapon max; input-cause
-   classes only when `|Mouse1 residual| ≤ 30 ms`. Cache is excluded from
-   input-cause. There is no leftover `RELEASE_ONLY` bin.
+   `shots_fired==1`; rifle accuracy = speed < 34% of weapon max. Input-cause
+   uses **one-to-one monotonic** Mouse1 matching and timestamped WASD
+   events; classes only when `|classification residual| ≤ 30 ms`. Cache is
+   excluded. No leftover `RELEASE_ONLY` bin.
 
 Corrected first-dataset numbers (4 matches, 2026-09-01; **do not use the
 old 86.4% / 50% RELEASE_ONLY headlines**):
 
 - First bullets: 393 (`shots_fired==1`) vs 184 under the old 1 s gap
-- Rifle first-bullet accurate (AK/M4/Galil/FAMAS, 1-tick speed < 34% max):
-  **115/170 = 67.6%** (the old ±16 window + flat 130 u/s read 93.5% on the
-  same 170 shots)
-- Input-cause is trusted on only **58/393** first bullets; the rest fail
-  the 30 ms Mouse1 gate. Among those 58: 22 A/D with no opposite onset,
-  17 clean counters, 13 diagonal (W/S+A/D). Too few to change training.
+- All-posture rifle first-bullet accurate (AK/M4/Galil/FAMAS):
+  **115/170 = 67.6%**
+- Standing, on-ground (primary counter-strafe headline):
+  **92/145 = 63.4%** (crouched 22/24 = 91.7%)
+- Input-cause trusted on **36/393** first bullets after the 30 ms gate and
+  Cache skip (one-to-one match; nearest-edge used to report 58/393). Among
+  those 36: 33 `LATERAL_COUNTER`, 1 `DIAGONAL_COUNTER`, 1 held, 1 stationary.
+  Too few to change training.
 - Full report: `phase2/PHASE3_REPORT.md`
 
 ## Future improvements
@@ -240,7 +251,7 @@ Deliberately deferred — each is triggered by evidence, not by speculation:
 | Item | Trigger / precondition | Notes |
 |------|------------------------|-------|
 | Auto-start at login | User convenience; one Task Scheduler entry | No code changes needed |
-| Diagonal counter classifier (WA→SD etc.) | More matches **and** tighter CSI↔demo residual | W/S involvement is already flagged; full opposite-diagonal states need more than 58 sync-ok first bullets |
+| Diagonal counter classifier (WA→SD etc.) | More matches **and** tighter CSI↔demo residual | `DIAGONAL_COUNTER` exists (WA→SD / WD→SA); 1 trusted example in this dataset |
 | Rolling cross-match stats (brief §21) | ~10+ matches | Only useful once per-match analysis proves stable |
 | Raw Input keyboard backend | Evidence of missed digital transitions in real data | `GetAsyncKeyState` has never missed one so far |
 | Busy-wait timer hybrid (exact 1000.0 Hz) | Only if sub-sample timing ever matters | Costs ~1–2% CPU; `dt_us` already makes it unnecessary |
